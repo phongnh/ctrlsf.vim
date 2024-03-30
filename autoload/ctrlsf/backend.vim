@@ -9,57 +9,22 @@
 let s:backend_error_log_file = tempname()
 
 let s:backend_args_map = {
-    \ 'ag': {
+    \ 'sg': {
         \ 'ignorecase': {
-            \ 'smartcase': '--smart-case',
-            \ 'ignorecase': '--ignore-case',
-            \ 'matchcase': '--case-sensitive'
-            \ },
-        \ 'ignoredir': '--ignore-dir',
-        \ 'regex': {
-            \ '1': '',
-            \ '0': '--literal'
-            \ },
-        \ 'follow': {
-            \ '1': '-f',
-            \ '0': '--nofollow'
-            \ },
-        \ 'default': '--noheading --nogroup --nocolor --nobreak'
-        \ },
-    \ 'ack': {
-        \ 'ignorecase': {
-            \ 'smartcase': '--smart-case',
-            \ 'ignorecase': '--ignore-case',
-            \ 'matchcase': '--no-smart-case'
-            \ },
-        \ 'ignoredir': '--ignore-dir',
-        \ 'regex': {
-            \ '1': '',
-            \ '0': '--literal'
-            \ },
-        \ 'follow': {
-            \ '1': '--follow',
-            \ '0': '--nofollow'
-            \ },
-        \ 'default': '--noheading --nogroup --nocolor --nobreak --nocolumn
-            \ --with-filename'
-        \ },
-    \ 'pt': {
-        \ 'ignorecase': {
-            \ 'smartcase': '--smart-case',
-            \ 'ignorecase': '--ignore-case',
+            \ 'smartcase': '',
+            \ 'ignorecase': '',
             \ 'matchcase': ''
             \ },
-        \ 'ignoredir': '--ignore',
+        \ 'ignoredir': '-g',
         \ 'regex': {
-            \ '1': '-e',
+            \ '1': '',
             \ '0': ''
             \ },
         \ 'follow': {
             \ '1': '',
             \ '0': ''
             \ },
-        \ 'default': '--nogroup --nocolor'
+        \ 'default': '--heading never --color never'
         \ },
     \ 'rg': {
         \ 'ignorecase': {
@@ -112,10 +77,6 @@ func! s:BuildCommand(args, for_shell) abort
             for dir in ignore_dir
                 call add(tokens, arg_name . ' !' . s:Escape(a:for_shell, dir))
             endfor
-        else
-            for dir in ignore_dir
-                call add(tokens, arg_name . ' ' . s:Escape(a:for_shell, dir))
-            endfor
         endif
     endif
 
@@ -126,43 +87,25 @@ func! s:BuildCommand(args, for_shell) abort
     " filetype (NOT SUPPORTED BY ALL BACKEND)
     " support backend: ag, ack, rg
     if !empty(ctrlsf#opt#GetOpt('filetype'))
-        if runner ==# 'ag' || runner ==# 'ack'
-            call add(tokens, '--' . ctrlsf#opt#GetOpt('filetype'))
+        if runner ==# 'sg'
+            call add(tokens, '--lang ' . ctrlsf#opt#GetOpt('filetype'))
         elseif runner ==# 'rg'
             call add(tokens, '--type ' . ctrlsf#opt#GetOpt('filetype'))
         endif
     endif
 
     if !empty(ctrlsf#opt#GetOpt('word'))
-        call add(tokens, '-w')
+        if runner ==# 'rg'
+            call add(tokens, '-w')
+        endif
     endif
 
     " filematch (NOT SUPPORTED BY ALL BACKEND)
     " support backend: ag, ack, pt, rg
     if !empty(ctrlsf#opt#GetOpt('filematch'))
-        if runner ==# 'ag'
-            call extend(tokens, [
-                \ '--file-search-regex',
-                \ s:Escape(a:for_shell, ctrlsf#opt#GetOpt('filematch'))
-                \ ])
-        elseif runner ==# 'pt'
-            call add(tokens, printf("--file-search-regex=%s",
-                        \ s:Escape(a:for_shell, ctrlsf#opt#GetOpt('filematch'))))
-        elseif runner ==# 'rg'
+        if runner ==# 'rg'
             call add(tokens, printf("-g %s",
                         \ s:Escape(a:for_shell, ctrlsf#opt#GetOpt('filematch'))))
-        elseif runner ==# 'ack'
-            " pipe: 'ack -g ${filematch} ${path} |'
-            let pipe_tokens = [
-                \ g:ctrlsf_backend,
-                \ '-g',
-                \ s:Escape(a:for_shell, ctrlsf#opt#GetOpt('filematch'))
-                \ ]
-            call extend(pipe_tokens, ctrlsf#opt#GetPath())
-            call add(pipe_tokens, '|')
-
-            call insert(tokens, join(pipe_tokens, ' '))
-            call add(tokens, '--files-from=-')
         endif
     endif
 
@@ -173,7 +116,9 @@ func! s:BuildCommand(args, for_shell) abort
     " search hidden files (NOT SUPPORTED BY ALL BACKEND)
     " support backend: ag, rg, pt
     if !empty(ctrlsf#opt#GetOpt('hidden'))
-      if runner !=# 'ack'
+      if runner ==# 'sg'
+        call add(tokens, "--no-ignore hidden")
+      elseif runner ==# 'rg'
         call add(tokens, "--hidden")
       endif
     endif
@@ -188,11 +133,17 @@ func! s:BuildCommand(args, for_shell) abort
         call add(tokens, extra_args)
     endif
 
-    " no more flags
-    call add(tokens, "--")
-
-    " pattern (including escape)
-    call add(tokens, s:Escape(a:for_shell, ctrlsf#opt#GetOpt('pattern')))
+    if runner ==# 'sg'
+        " no more flags
+        call add(tokens, "--pattern")
+        " pattern (including escape)
+        call add(tokens, s:Escape(a:for_shell, ctrlsf#opt#GetOpt('pattern')))
+    elseif runner ==# 'rg'
+        " no more flags
+        call add(tokens, "--")
+        " pattern (including escape)
+        call add(tokens, s:Escape(a:for_shell, ctrlsf#opt#GetOpt('pattern')))
+    endif
 
     " path
     let path = ctrlsf#opt#GetPath()
@@ -212,24 +163,12 @@ endf
 " Detect()
 "
 func! ctrlsf#backend#Detect()
+    if executable('sg')
+        return 'sg'
+    endif
+
     if executable('rg')
         return 'rg'
-    endif
-
-    if executable('ag')
-        return 'ag'
-    endif
-
-    if executable('pt')
-        return 'pt'
-    endif
-
-    if executable('ack')
-        return 'ack'
-    endif
-
-    if executable('ack-grep')
-        return 'ack-grep'
     endif
 
     return ''
@@ -240,16 +179,10 @@ endf
 func! ctrlsf#backend#Runner()
     if !exists('g:ctrlsf_backend')
         return ''
-    elseif g:ctrlsf_backend =~# 'ag'
-        return 'ag'
-    elseif g:ctrlsf_backend =~# 'ack'
-        return 'ack'
+    elseif g:ctrlsf_backend =~# 'sg'
+        return 'sg'
     elseif g:ctrlsf_backend =~# 'rg'
         return 'rg'
-    elseif g:ctrlsf_backend =~# 'pt'
-        return 'pt'
-    elseif g:ctrlsf_backend =~# 'ack-grep'
-        return 'ack'
     else
         return ''
     endif
